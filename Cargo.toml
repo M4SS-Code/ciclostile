@@ -1,0 +1,39 @@
+[package]
+name = "ciclostile"
+version = "0.0.1"
+description = "Fill .docx templates: replace text, insert images and tables, and keep everything else untouched"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/M4SS-Code/ciclostile"
+rust-version = "1.88"
+keywords = ["docx", "word", "ooxml", "template", "office"]
+categories = ["text-processing", "template-engine"]
+
+[dependencies]
+bytes = "1"
+img-parts = "0.4.2"
+miniz_oxide = "0.9"
+quick-xml = "0.42"
+rawzip = "0.5.2"
+thiserror = "2"
+
+[dev-dependencies]
+# zip's deflate-flate2 feature turns off flate2's default backend; this enables it again.
+flate2 = "1"
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+
+[lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+await_holding_refcell_ref = "deny"
+map_unwrap_or = "warn"
+needless_lifetimes = "warn"
+needless_raw_string_hashes = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+str_to_string = "warn"
+clone_on_ref_ptr = "warn"
