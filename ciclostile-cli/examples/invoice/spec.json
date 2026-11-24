@@ -1,0 +1,40 @@
+{
+  "template": "template.docx",
+  "output": "invoice.docx",
+  "text": {
+    "{{company}}": "Difference Engines Ltd",
+    "{{company_address}}": "1 Dorset Street, London",
+    "{{number}}": "2026-0042",
+    "{{date}}": "24 November 2026",
+    "{{due}}": "24 December 2026",
+    "{{customer}}": "Ada Lovelace",
+    "{{address}}": "12 St James's Square\nLondon SW1Y 4JH",
+    "{{subtotal}}": "£17,525.00",
+    "{{vat}}": "£3,505.00",
+    "{{total}}": "£21,030.00",
+    "{{notes}}": "Payment by bank transfer within 30 days.\nThe punched cards ship separately."
+  },
+  "images": [
+    {
+      "placeholder": "{{logo}}",
+      "path": "logo.png",
+      "height": "1.2cm",
+      "alt_text": "Difference Engines Ltd"
+    }
+  ],
+  "tables": [
+    {
+      "placeholder": "{{items}}",
+      "rows": [
+        ["Item", "Quantity", "Unit price", "Amount"],
+        ["Analytical engine", 1, "£17,000.00", "£17,000.00"],
+        ["Punched cards (box of 100)", 5, "£25.00", "£125.00"],
+        ["Installation and training", 1, "£400.00", "£400.00"]
+      ],
+      "header": true,
+      "style": "InvoiceTable",
+      "column_widths": ["7.4cm", "2.5cm", "3cm", "3cm"]
+    }
+  ],
+  "strict": true
+}

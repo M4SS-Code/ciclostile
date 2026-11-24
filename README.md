@@ -17,8 +17,9 @@ of XML the edit doesn't need to change stays as it was.
 ## Quick start
 
 Open the template, fill in its placeholders and write the result. The
-[`fill_template`](examples/fill_template.rs) example does the same from
-the command line.
+[`fill_template`](examples/fill_template.rs) example is a small program
+doing the same; for a ready-made command-line tool, see
+[Command line](#command-line).
 
 ```rust
 use ciclostile::{Docx, Image, Length, Table};
@@ -47,6 +48,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+To see which placeholders a template holds, or to check that a filled
+document has none left, list them with `Docx::placeholders("{{", "}}")`.
+
+## Command line
+
+The [`ciclostile-cli`](ciclostile-cli) crate installs a `ciclostile`
+binary that does the same edits from flags, a JSON spec, or both, and
+prints a JSON report of how many times each placeholder was replaced and
+which ones are left. `ciclostile placeholders` lists the placeholders of a
+template, and `ciclostile fill --help` describes the spec format.
+
+```sh
+ciclostile fill template.docx -o output.docx \
+  --text '{{customer}}=Ada Lovelace' \
+  --image '{{logo}}=logo.png,width=4cm,alt=Logo' \
+  --table '{{items}}={"rows": [["Item", "Quantity"], ["Punched cards", 500]], "header": true}'
+
+ciclostile fill --spec spec.json --strict
+
+ciclostile placeholders template.docx
+```
+
+[`ciclostile-cli/examples/invoice`](ciclostile-cli/examples/invoice) holds
+a complete example: a template, a logo and a spec that fills every
+placeholder. Run `ciclostile fill --spec spec.json` in that directory to
+get `invoice.docx`, which looks like [`preview.png`](ciclostile-cli/examples/invoice/preview.png).
 
 ## License
 

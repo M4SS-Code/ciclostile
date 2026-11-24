@@ -18,7 +18,7 @@
 //! # Quick start
 //!
 //! Open the template, fill in its placeholders and write the result. The
-//! `fill_template` example does the same from the command line.
+//! `fill_template` example is a small program doing the same.
 //!
 //! ```rust,no_run
 //! use ciclostile::{Docx, Image, Length, Table};
@@ -47,6 +47,9 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! To see which placeholders a template holds, or to check that a filled
+//! document has none left, list them with [`Docx::placeholders`].
 
 mod docx;
 mod image;

@@ -51,7 +51,7 @@ jobs:
           components: clippy
 
       - name: cargo clippy
-        run: cargo clippy --locked --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: test / ${{ matrix.name }}
@@ -91,7 +91,7 @@ jobs:
             rust-${{ matrix.rust }}-${{ runner.arch }}-
 
       - name: cargo test
-        run: cargo test --locked
+        run: cargo test --locked --workspace
 
 
   deny:

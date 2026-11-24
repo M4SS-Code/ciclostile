@@ -2,10 +2,10 @@
 name = "ciclostile"
 version = "0.0.1"
 description = "Fill .docx templates: replace text, insert images and tables, and keep everything else untouched"
-edition = "2024"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/M4SS-Code/ciclostile"
-rust-version = "1.88"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 keywords = ["docx", "word", "ooxml", "template", "office"]
 categories = ["text-processing", "template-engine"]
 
@@ -22,11 +22,23 @@ thiserror = "2"
 flate2 = "1"
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace]
+members = ["ciclostile-cli"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/M4SS-Code/ciclostile"
+rust-version = "1.88"
+
+[workspace.lints.rust]
 unsafe_code = "deny"
 unreachable_pub = "deny"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 await_holding_refcell_ref = "deny"
