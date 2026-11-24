@@ -177,6 +177,46 @@ pub(crate) fn table_placeholders_are_alone(root: &Element, placeholder: &str) ->
         })
 }
 
+/// Append to `found` every stretch of paragraph text under `root` that
+/// starts with `open` and ends with the next `close`, delimiters included,
+/// paragraph by paragraph in document order: the paragraphs of a text box
+/// after the whole paragraph it is anchored in.
+///
+/// Paragraph text is what matching sees (see the module docs): the text
+/// of a paragraph's runs joined, without deleted text, in barrier-free
+/// stretches that no occurrence spans. Where `open` occurs again before
+/// `close`, the stretch starts at the last one. Empty delimiters match
+/// nothing.
+pub(crate) fn find_delimited(root: &Element, open: &str, close: &str, found: &mut Vec<String>) {
+    if open.is_empty() || close.is_empty() {
+        return;
+    }
+    every_paragraph(root, &mut |paragraph| {
+        for (_, text) in TextModel::new(paragraph).segment_texts() {
+            delimited_in(text, open, close, found);
+        }
+        true
+    });
+}
+
+/// Append to `found` the stretches of `text` delimited as
+/// [`find_delimited`] describes.
+fn delimited_in(text: &str, open: &str, close: &str, found: &mut Vec<String>) {
+    let mut rest = text;
+    while let Some(first_open) = rest.find(open) {
+        let content_start = first_open + open.len();
+        let Some(close_offset) = rest[content_start..].find(close) else {
+            break;
+        };
+        let close_start = content_start + close_offset;
+        // `rfind` finds `first_open` at the latest.
+        let start = rest[..close_start].rfind(open).unwrap_or(first_open);
+        let end = close_start + close.len();
+        found.push(rest[start..end].to_owned());
+        rest = &rest[end..];
+    }
+}
+
 /// Replace every paragraph under `root` whose only content is `placeholder`
 /// with a copy of `table`.
 ///
@@ -1688,6 +1728,66 @@ mod tests {
         let model = TextModel::new(doc.descendants().find(|e| e.is(Ns::W, "p")).unwrap());
         assert!(!model.more_than_text);
         assert!(model.is_only("{{t}}") && !model.is_only("{{t}}\u{a0}"));
+    }
+
+    // ── Finding placeholders ─────────────────────────────────────────────────
+
+    /// Return the stretches of `text` from `open` to `close`.
+    fn delimited(text: &str, open: &str, close: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        delimited_in(text, open, close, &mut found);
+        found
+    }
+
+    #[test]
+    fn delimited_stretches_end_at_the_first_close() {
+        assert_eq!(delimited("{{a}} and {{b}}", "{{", "}}"), ["{{a}}", "{{b}}"]);
+        assert_eq!(delimited("{{a}}}}", "{{", "}}"), ["{{a}}"]);
+        assert_eq!(delimited("{{}}", "{{", "}}"), ["{{}}"]);
+        assert_eq!(delimited("[a] [b", "[", "]"), ["[a]"]);
+        assert_eq!(delimited("}} {{a", "{{", "}}"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn delimited_stretches_start_at_the_last_open() {
+        assert_eq!(delimited("{{ {{name}}", "{{", "}}"), ["{{name}}"]);
+        assert_eq!(delimited("{{{a}}", "{{", "}}"), ["{{a}}"]);
+        // The same delimiter on both sides.
+        assert_eq!(delimited("%a% %b%", "%", "%"), ["%a%", "%b%"]);
+        assert_eq!(
+            delimited("«nome» e «città»", "«", "»"),
+            ["«nome»", "«città»"]
+        );
+    }
+
+    #[test]
+    fn placeholders_follow_the_text_model() {
+        let doc = document(&format!(
+            concat!(
+                // Split across runs by proofing marks: found.
+                "<w:p><w:r><w:t>Dear {{{{</w:t></w:r><w:proofErr w:type=\"spellStart\"/>",
+                "<w:r><w:t>name</w:t></w:r><w:proofErr w:type=\"spellEnd\"/>",
+                "<w:r><w:t>}}}},</w:t></w:r></w:p>",
+                // Deleted with tracked changes: left out.
+                "<w:p><w:del w:id=\"1\" w:author=\"A\"><w:r><w:delText>{{{{old}}}}</w:delText>",
+                "</w:r></w:del><w:r><w:t>{{{{new}}}}</w:t></w:r></w:p>",
+                // Interrupted by a tab: not a placeholder.
+                "<w:p><w:r><w:t>{{{{ta</w:t><w:tab/><w:t>b}}}}</w:t></w:r></w:p>",
+                // In a text box: found in both copies, after the outer text.
+                "<w:p><w:r><w:t>{{{{outer}}}}</w:t></w:r>{}</w:p>",
+            ),
+            text_box("<w:p><w:r><w:t>{{boxed}}</w:t></w:r></w:p>"),
+        ));
+        let mut found = Vec::new();
+        find_delimited(&doc, "{{", "}}", &mut found);
+        assert_eq!(
+            found,
+            ["{{name}}", "{{new}}", "{{outer}}", "{{boxed}}", "{{boxed}}"]
+        );
+
+        let mut found = Vec::new();
+        find_delimited(&doc, "", "}}", &mut found);
+        assert_eq!(found, Vec::<String>::new());
     }
 
     // ── Matching ─────────────────────────────────────────────────────────────

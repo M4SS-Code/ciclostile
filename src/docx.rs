@@ -661,6 +661,52 @@ impl Docx {
         Ok(total)
     }
 
+    /// Return every placeholder in the document that starts with `open`
+    /// and ends with `close`, delimiters included, in document order.
+    ///
+    /// Use it to see which placeholders a template holds, or to check that
+    /// a filled document has none left. It looks where
+    /// [`replace_text`](Self::replace_text) does and sees the same text:
+    /// the main text with its tables, text boxes and content controls,
+    /// headers, footers, footnotes and endnotes, with text that Word stored
+    /// as several runs joined and text deleted with tracked changes left
+    /// out. So every placeholder listed can be replaced, and one
+    /// interrupted by a tab, a line break, a picture or a field, which
+    /// can't, isn't listed.
+    ///
+    /// A placeholder ends at the first `close` after `open`. Where `open`
+    /// occurs again before that, it starts at the last one, so the text
+    /// `{{ {{name}}` holds `{{name}}`. An `open` with no `close` after it
+    /// is ignored, and empty delimiters match nothing.
+    ///
+    /// Each occurrence is listed: a placeholder used twice appears twice,
+    /// and one in a text box appears twice as often, since Word stores each
+    /// text box twice. The main text comes first, then the other parts, each
+    /// in document order, except that the placeholders of a text box come
+    /// after those of the whole paragraph it is anchored in.
+    ///
+    /// ```no_run
+    /// use ciclostile::Docx;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut docx = Docx::from_bytes(std::fs::read("template.docx")?)?;
+    /// println!("the template needs {:?}", docx.placeholders("{{", "}}"));
+    ///
+    /// docx.replace_text([("{{name}}", "Ada Lovelace")]);
+    /// let left = docx.placeholders("{{", "}}");
+    /// assert!(left.is_empty(), "not filled: {left:?}");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn placeholders(&self, open: &str, close: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for story in &self.stories {
+            replace::find_delimited(&story.part.xml.root, open, close, &mut found);
+        }
+        found
+    }
+
     /// Make Word offer to update the document's fields when it opens the
     /// file, so that tables of contents and page references show the pages
     /// of the filled document.

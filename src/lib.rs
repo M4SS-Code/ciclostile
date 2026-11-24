@@ -47,6 +47,9 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! To see which placeholders a template holds, or to check that a filled
+//! document has none left, list them with [`Docx::placeholders`].
 
 mod docx;
 mod image;

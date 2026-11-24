@@ -48,6 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+To see which placeholders a template holds, or to check that a filled
+document has none left, list them with `Docx::placeholders("{{", "}}")`.
+
 ## License
 
 Licensed under either of
