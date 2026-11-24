@@ -129,7 +129,10 @@ fn refusal_leaves_qualifying_paragraphs_alone() {
     assert_eq!(err.into_inner(), "{{signature}}");
     assert_eq!(docx.to_bytes(), baseline);
 
-    assert_eq!(docx.replace_text([("{{signature}}", "Ada")]), 2);
+    assert_eq!(
+        docx.replace_text([("{{signature}}", "Ada")]),
+        [("{{signature}}", 2)]
+    );
 }
 
 #[test]

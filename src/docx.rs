@@ -441,7 +441,7 @@ impl Docx {
     }
 
     /// Replace every occurrence of each key of `replacements` with its
-    /// value, and return the number of replacements made.
+    /// value, and return each key with the number of times it was replaced.
     ///
     /// The keys are placeholders: plain text, such as `{{name}}`, matched
     /// exactly and case-sensitively in the text of each paragraph, as Word
@@ -466,6 +466,14 @@ impl Docx {
     /// `{{b}}` with `x` in the same call turns `{{a}}` into `{{b}}`. Where
     /// two keys start at the same place, the longer one wins. Empty keys are
     /// ignored, and a key given more than once only uses its first value.
+    ///
+    /// The keys come back in the order they were given, each with the
+    /// number of occurrences its value replaced, so a key that matched
+    /// nowhere has 0. So does a key that was found, but only inside
+    /// occurrences of a longer key that wins there: with `Invoice` and
+    /// `Invoice {{number}}`, the text `Invoice {{number}}` counts for the
+    /// second key only. Empty keys and repeated keys after the first have 0
+    /// too.
     ///
     /// A value takes the formatting of the first character of the
     /// placeholder it replaces. In values, line breaks (`\n`, `\r\n` or
@@ -494,12 +502,13 @@ impl Docx {
     ///     ("{{name}}".to_owned(), "Ada Lovelace".to_owned()),
     ///     ("{{address}}".to_owned(), "12 St James's Square\nLondon".to_owned()),
     /// ]);
-    /// let replaced = docx.replace_text(&values);
-    /// println!("{replaced} placeholders replaced");
+    /// for (key, replaced) in docx.replace_text(&values) {
+    ///     println!("{key}: {replaced} replaced");
+    /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn replace_text<I, K, V>(&mut self, replacements: I) -> usize
+    pub fn replace_text<I, K, V>(&mut self, replacements: I) -> Vec<(K, usize)>
     where
         I: IntoIterator<Item = (K, V)>,
         K: AsRef<str>,
@@ -511,15 +520,21 @@ impl Docx {
             .map(|(key, value)| (key.as_ref(), value.as_ref()))
             .collect();
 
-        let mut total = 0_usize;
+        let mut totals = vec![0_usize; pairs.len()];
         for story in &mut self.stories {
-            let count = replace::replace_text(&mut story.part.xml.root, &pairs);
-            if count > 0 {
+            let counts = replace::replace_text(&mut story.part.xml.root, &pairs);
+            if counts.iter().any(|&count| count > 0) {
                 story.part.dirty = true;
-                total = total.saturating_add(count);
+            }
+            for (total, count) in totals.iter_mut().zip(counts) {
+                *total = total.saturating_add(count);
             }
         }
-        total
+        replacements
+            .into_iter()
+            .zip(totals)
+            .map(|((key, _), total)| (key, total))
+            .collect()
     }
 
     /// Replace every occurrence of `placeholder` with `image`, and return

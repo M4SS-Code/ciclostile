@@ -95,7 +95,7 @@ fn main_part_is_found_through_the_package_relationships() {
     let mut docx = Docx::from_bytes(template.clone()).unwrap();
     // The name in the main part, the company in the header and the footer.
     let count = docx.replace_text([("{{name}}", "Ada"), ("{{company}}", "Babbage & Co.")]);
-    assert_eq!(count, 3);
+    assert_eq!(count, [("{{name}}", 1), ("{{company}}", 2)]);
     let added = common::assert_kept_except(
         &common::untouched(&template),
         &docx.to_bytes(),
@@ -126,7 +126,10 @@ fn stories_shared_by_sections_are_read_once() {
     let mut docx = Docx::from_bytes(template.clone()).unwrap();
     // Once each in the header, the footer and the endnote: the header
     // counts once.
-    assert_eq!(docx.replace_text([("{{company}}", "Babbage & Co.")]), 3);
+    assert_eq!(
+        docx.replace_text([("{{company}}", "Babbage & Co.")]),
+        [("{{company}}", 3)]
+    );
     let added = common::assert_kept_except(
         &common::untouched(&template),
         &docx.to_bytes(),

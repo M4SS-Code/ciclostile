@@ -34,7 +34,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("{{date}}", "3 November 2026"),
         ("{{address}}", "12 St James's Square\nLondon"),
     ]);
-    println!("text: {replaced} replaced");
+    for (placeholder, count) in replaced {
+        println!("{placeholder}: {count} replaced");
+    }
 
     // Each of the 3x2 pixels becomes a 1 cm square.
     let logo = Image::from_bytes(LOGO)?

@@ -38,7 +38,7 @@ fn placeholder_split_across_runs_is_replaced() {
     // `{{`, `number` and `}}` are three runs with spell-check marks between
     // them.
     let (baseline, output, count) = fill(|docx| docx.replace_text([("{{number}}", "2026-0042")]));
-    assert_eq!(count, 1);
+    assert_eq!(count, [("{{number}}", 1)]);
     assert_paragraph(&output, "word/document.xml", "Invoice 2026-0042");
     let added = common::assert_kept_except(&baseline, &output, &["word/document.xml"]);
     assert_eq!(added, [] as [String; 0]);
@@ -63,7 +63,20 @@ fn placeholders_are_replaced_in_every_story() {
     // content twice (DrawingML and the VML fallback). Then the company in
     // the header, the footer and the endnote, and the currency in the
     // footnote.
-    assert_eq!(count, 8 + 3 + 1);
+    assert_eq!(
+        count,
+        [
+            ("{{number}}", 1),
+            ("{{customer}}", 1),
+            ("{{site}}", 1),
+            ("{{phone}}", 1),
+            ("{{total}}", 1),
+            ("{{boxed}}", 2),
+            ("{{date}}", 1),
+            ("{{company}}", 3),
+            ("{{currency}}", 1),
+        ]
+    );
 
     let document = "word/document.xml";
     assert_paragraph(&output, document, "Invoice 42");
@@ -101,7 +114,7 @@ fn placeholders_are_replaced_in_every_story() {
 #[test]
 fn only_changed_parts_are_rewritten() {
     let (baseline, output, count) = fill(|docx| docx.replace_text([("{{currency}}", "euros")]));
-    assert_eq!(count, 1);
+    assert_eq!(count, [("{{currency}}", 1)]);
     let added = common::assert_kept_except(&baseline, &output, &["word/footnotes.xml"]);
     assert_eq!(added, [] as [String; 0]);
 }
@@ -132,14 +145,14 @@ fn unmatched_placeholders_leave_the_document_untouched() {
     // `{{title}}` is only in the core properties, which are not searched.
     let (baseline, output, count) =
         fill(|docx| docx.replace_text([("{{nowhere}}", "x"), ("{{title}}", "y")]));
-    assert_eq!(count, 0);
+    assert_eq!(count, [("{{nowhere}}", 0), ("{{title}}", 0)]);
     assert_eq!(output, baseline);
 }
 
 #[test]
 fn empty_keys_are_ignored() {
     let (baseline, output, count) = fill(|docx| docx.replace_text([("", "x")]));
-    assert_eq!(count, 0);
+    assert_eq!(count, [("", 0)]);
     assert_eq!(output, baseline);
 }
 
@@ -153,7 +166,7 @@ fn replacements_are_made_in_a_single_pass() {
             ("{{phone}}", "555-0100"),
         ])
     });
-    assert_eq!(count, 2);
+    assert_eq!(count, [("{{customer}}", 1), ("{{phone}}", 1)]);
     assert_paragraph(
         &output,
         "word/document.xml",
@@ -170,7 +183,8 @@ fn replacements_are_made_in_a_single_pass() {
 fn longer_key_wins_at_the_same_position() {
     let (_, output, count) =
         fill(|docx| docx.replace_text([("{{cust", "short"), ("{{customer}}", "long")]));
-    assert_eq!(count, 1);
+    // `{{cust` is found too, but inside the occurrence of the longer key.
+    assert_eq!(count, [("{{cust", 0), ("{{customer}}", 1)]);
     assert_paragraph(&output, "word/document.xml", "Dear long,");
 }
 
@@ -178,7 +192,7 @@ fn longer_key_wins_at_the_same_position() {
 fn first_value_wins_for_a_repeated_key() {
     let (_, output, count) =
         fill(|docx| docx.replace_text([("{{date}}", "first"), ("{{date}}", "second")]));
-    assert_eq!(count, 1);
+    assert_eq!(count, [("{{date}}", 1), ("{{date}}", 0)]);
     assert_paragraph(&output, "word/document.xml", "first");
 }
 
@@ -210,18 +224,28 @@ fn values_can_come_from_maps() {
         ("{{date}}".to_owned(), "today".to_owned()),
         ("{{total}}".to_owned(), "0".to_owned()),
     ]);
-    assert_eq!(docx.replace_text(&values), 2);
+    // The keys come back with their counts, whatever order the map gives.
+    let mut counts: Vec<(&str, usize)> = docx
+        .replace_text(&values)
+        .into_iter()
+        .map(|(key, count)| (key.as_str(), count))
+        .collect();
+    counts.sort_unstable();
+    assert_eq!(counts, [("{{date}}", 1), ("{{total}}", 1)]);
 
     let mut docx = Docx::from_bytes(template).unwrap();
     let values = BTreeMap::from([("{{date}}", String::from("today"))]);
-    assert_eq!(docx.replace_text(values), 1);
+    assert_eq!(docx.replace_text(values), [("{{date}}", 1)]);
 }
 
 #[test]
 fn filled_document_can_be_filled_again() {
     let (_, output, _) = fill(|docx| docx.replace_text([("{{customer}}", "{{phone}}")]));
     let mut docx = Docx::from_bytes(output).unwrap();
-    assert_eq!(docx.replace_text([("{{phone}}", "555-0100")]), 2);
+    assert_eq!(
+        docx.replace_text([("{{phone}}", "555-0100")]),
+        [("{{phone}}", 2)]
+    );
     let output = docx.to_bytes();
     assert_paragraph(&output, "word/document.xml", "Dear 555-0100,");
     assert_paragraph(

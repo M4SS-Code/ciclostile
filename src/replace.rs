@@ -84,22 +84,31 @@ use crate::xml::{
 /// (`\r\n`, `\r` or `\n`) become `w:br` elements and tabs `w:tab`
 /// elements; characters XML cannot represent are dropped.
 ///
-/// Returns the number of occurrences replaced.
-pub(crate) fn replace_text(root: &mut Element, replacements: &[(&str, &str)]) -> usize {
-    let pairs: Vec<(&str, &str)> = replacements
+/// Returns the number of occurrences replaced for each pair, in order. An
+/// empty key replaces nothing, and neither does a key that an earlier pair
+/// already has: its count is 0.
+pub(crate) fn replace_text(root: &mut Element, replacements: &[(&str, &str)]) -> Vec<usize> {
+    let mut counts = vec![0_usize; replacements.len()];
+    // Each pair with a key, with its index in `replacements`.
+    let pairs: Vec<(usize, &str, &str)> = replacements
         .iter()
-        .copied()
-        .filter(|(key, _)| !key.is_empty())
+        .enumerate()
+        .filter(|(_, (key, _))| !key.is_empty())
+        .map(|(index, &(key, value))| (index, key, value))
         .collect();
-    let keys = pairs.iter().map(|&(key, _)| key).collect();
+    let keys = pairs.iter().map(|&(_, key, _)| key).collect();
     // Text always fits: see the module docs.
     Replacer::new(keys, |index, _, pieces: &mut Pieces| {
-        if let Some(&(_, value)) = pairs.get(index) {
+        if let Some(&(pair, _, value)) = pairs.get(index) {
             pieces.push_value(value);
+            if let Some(count) = counts.get_mut(pair) {
+                *count = count.saturating_add(1);
+            }
         }
         true
     })
-    .run(root)
+    .run(root);
+    counts
 }
 
 /// Replace every occurrence of `placeholder` in every paragraph under `root`
@@ -1528,8 +1537,9 @@ mod tests {
     }
 
     /// Replace `pairs` in a test document whose body content is `body_xml`;
-    /// return the number of occurrences replaced and the new body content.
-    fn replaced(body_xml: &str, pairs: &[(&str, &str)]) -> (usize, String) {
+    /// return the number of occurrences replaced for each pair and the new
+    /// body content.
+    fn replaced(body_xml: &str, pairs: &[(&str, &str)]) -> (Vec<usize>, String) {
         let mut doc = document(body_xml);
         let count = replace_text(&mut doc, pairs);
         (count, body(&doc))
@@ -1753,7 +1763,7 @@ mod tests {
                 &[("{{name}}", "Ada")],
             ),
             (
-                1,
+                vec![1],
                 concat!(
                     "<w:p w:rsidR=\"00B5\"><w:r><w:rPr><w:b/></w:rPr>",
                     "<w:t xml:space=\"preserve\">Dear Ada,</w:t></w:r></w:p>",
@@ -1780,7 +1790,7 @@ mod tests {
                 &[("{{customer}}", "ACME")],
             ),
             (
-                1,
+                vec![1],
                 concat!(
                     "<w:p w:rsidR=\"00B57C6E\" w:rsidRDefault=\"00B57C6E\">",
                     "<w:r><w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">Dear ACME</w:t></w:r>",
@@ -1805,7 +1815,7 @@ mod tests {
                 &[("{{a}}", "1"), ("{{b}}", "22")],
             ),
             (
-                4,
+                vec![3, 1],
                 "<w:p><w:r><w:t xml:space=\"preserve\">1 and 1, then 221</w:t></w:r></w:p>"
                     .to_owned()
             )
@@ -1821,7 +1831,7 @@ mod tests {
                 &[("{{first}}", "Ada"), ("{{last}}", "Lovelace")],
             ),
             (
-                2,
+                vec![1, 1],
                 concat!(
                     "<w:p><w:r><w:t xml:space=\"preserve\">Hello Ada</w:t></w:r>",
                     "<w:r><w:rPr><w:i/></w:rPr><w:t xml:space=\"preserve\"> and Lovelace</w:t>",
@@ -1846,7 +1856,7 @@ mod tests {
                 ],
             ),
             (
-                3,
+                vec![1, 1, 1, 0, 0],
                 "<w:p><w:r><w:t xml:space=\"preserve\">AX {{b}} B</w:t></w:r></w:p>".to_owned()
             )
         );
@@ -1857,7 +1867,7 @@ mod tests {
                 &[("k", "1"), ("k", "2")]
             ),
             (
-                1,
+                vec![1, 0],
                 "<w:p><w:r><w:t xml:space=\"preserve\">1</w:t></w:r></w:p>".to_owned()
             )
         );
@@ -1877,7 +1887,7 @@ mod tests {
         );
         assert_eq!(
             replaced(unchanged, &[("{{name}}", "Ada")]),
-            (0, unchanged.to_owned())
+            (vec![0], unchanged.to_owned())
         );
         // Between barriers, and across a w:lastRenderedPageBreak.
         assert_eq!(
@@ -1889,7 +1899,7 @@ mod tests {
                 &[("{{name}}", "Ada")],
             ),
             (
-                2,
+                vec![2],
                 concat!(
                     "<w:p><w:r><w:tab/><w:t xml:space=\"preserve\">Ada</w:t><w:br/></w:r>",
                     "<w:r><w:t xml:space=\"preserve\">Ada</w:t><w:lastRenderedPageBreak/></w:r>",
@@ -1925,7 +1935,10 @@ mod tests {
                 "<w:r><w:t xml:space=\"preserve\">Ada</w:t></w:r></w:moveTo>",
                 1,
             );
-        assert_eq!(replaced(&body_xml, &[("{{name}}", "Ada")]), (2, expected));
+        assert_eq!(
+            replaced(&body_xml, &[("{{name}}", "Ada")]),
+            (vec![2], expected)
+        );
     }
 
     #[test]
@@ -1948,7 +1961,7 @@ mod tests {
             ),
             &[("{{a}}", "A"), ("{{split}}", "S")],
         );
-        assert_eq!(count, 7);
+        assert_eq!(count, [6, 1]);
         assert!(xml.contains("<w:alias w:val=\"{{a}}\"/>"), "{xml}");
         assert_eq!(paragraphs(&document(&xml)), ["AAAAAA", "S"]);
         assert!(xml.ends_with(concat!(
@@ -1967,7 +1980,7 @@ mod tests {
         ]
         .concat();
         let (count, xml) = replaced(&body_xml, &[("{{a}}", "X")]);
-        assert_eq!(count, 4);
+        assert_eq!(count, [4]);
         assert_eq!(
             paragraphs(&document(&xml)),
             ["Before X {{|a}} after X", "Box X", "Box X"]
@@ -1990,7 +2003,7 @@ mod tests {
                 &[("{{v}}", "1\n2\r\n3\r4\t5")],
             ),
             (
-                1,
+                vec![1],
                 concat!(
                     "<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">A1</w:t><w:br/>",
                     "<w:t xml:space=\"preserve\">2</w:t><w:br/><w:t xml:space=\"preserve\">3</w:t>",
@@ -2007,7 +2020,7 @@ mod tests {
                 &[("{{v}}", "\tX\n")],
             ),
             (
-                1,
+                vec![1],
                 "<w:p><w:r><w:tab/><w:t xml:space=\"preserve\">X</w:t><w:br/></w:r></w:p>"
                     .to_owned()
             )
@@ -2026,7 +2039,7 @@ mod tests {
                 &[("{{v}}", "  two  spaces  ")],
             ),
             (
-                3,
+                vec![3],
                 concat!(
                     "<w:p><w:r><w:t xml:space=\"preserve\">a   two  spaces  </w:t></w:r>",
                     "<w:r><w:t xml:space='preserve'>  two  spaces   b</w:t></w:r>",
@@ -2049,7 +2062,7 @@ mod tests {
                 &[("{{v}}", ""), ("{{w}}", "\u{1}\u{fffe}")],
             ),
             (
-                3,
+                vec![2, 1],
                 concat!(
                     "<w:p><w:r><w:rPr><w:b/></w:rPr></w:r>",
                     "<w:r><w:t xml:space=\"preserve\">x </w:t></w:r><w:r></w:r></w:p>",
@@ -2074,7 +2087,7 @@ mod tests {
                 ],
             ),
             (
-                3,
+                vec![1, 1, 1],
                 concat!(
                     "<w:p><w:r><w:t xml:space=\"preserve\">\u{fc}n\u{ef} Zo\u{eb}</w:t></w:r>",
                     "<w:r><w:t xml:space=\"preserve\">\u{2713} \u{65e5}\u{672c}\u{540d}\u{524d}",
@@ -2094,7 +2107,7 @@ mod tests {
              <x:t>{{{{name}}}}</x:t></x:r></ns0:p></ns0:body></ns0:document>"
         ))
         .unwrap();
-        assert_eq!(replace_text(&mut doc, &value), 2);
+        assert_eq!(replace_text(&mut doc, &value), [2]);
         assert_eq!(
             serialize(&doc),
             format!(
@@ -2118,7 +2131,7 @@ mod tests {
             "<document xmlns=\"{W}\"><body><p><r><t>x{{{{name}}}}</t></r></p></body></document>"
         ))
         .unwrap();
-        assert_eq!(replace_text(&mut doc, &value), 1);
+        assert_eq!(replace_text(&mut doc, &value), [1]);
         assert_eq!(
             serialize(&doc),
             format!(
@@ -2143,7 +2156,7 @@ mod tests {
                 ("{{item}}", "Widget"),
             ],
         );
-        assert_eq!(count, 9);
+        assert_eq!(count, [1, 4, 1, 1, 1, 1]);
         assert_eq!(
             paragraphs(&doc),
             [
@@ -2180,7 +2193,7 @@ mod tests {
                 ("{{item}}", "Widget"),
             ],
         );
-        assert_eq!(count, 3);
+        assert_eq!(count, [1, 1, 1]);
         let expected = std::str::from_utf8(LO_DOCUMENT)
             .unwrap()
             .replace(
@@ -2206,8 +2219,8 @@ mod tests {
             let mut doc = XmlDocument::parse(xml).unwrap();
             let root = &mut doc.root;
             let pairs = [("{{absent}}", "x"), ("", "y"), ("zzz", "")];
-            assert_eq!(replace_text(root, &pairs), 0);
-            assert_eq!(replace_text(root, &[]), 0);
+            assert_eq!(replace_text(root, &pairs), [0, 0, 0]);
+            assert_eq!(replace_text(root, &[]), []);
             assert_eq!(replace_with_element(root, "{{absent}}", || drawing(1)), 0);
             assert_eq!(replace_with_element(root, "", || drawing(1)), 0);
             assert!(table_placeholders_are_alone(root, "{{absent}}"));
@@ -2237,7 +2250,7 @@ mod tests {
         .concat();
         assert_eq!(
             replaced(&unchanged, &[("{{name}}", "Ada"), ("is  exactly", "QQQ")]),
-            (0, unchanged)
+            (vec![0, 0], unchanged)
         );
 
         // Text next to them is replaced, and the text boxes in them too.
@@ -2250,7 +2263,7 @@ mod tests {
         ]
         .concat();
         let (count, xml) = replaced(&body_xml, &[("{{name}}", "Ada")]);
-        assert_eq!(count, 3);
+        assert_eq!(count, [3]);
         assert_eq!(paragraphs(&document(&xml)), ["Ada", "Ada", "Ada"]);
     }
 
@@ -2267,7 +2280,7 @@ mod tests {
             ),
             &[("{{name}}", "Ada")],
         );
-        assert_eq!(count, 1);
+        assert_eq!(count, [1]);
         assert_eq!(paragraphs(&document(&xml)), ["Ada"]);
     }
 
@@ -2285,7 +2298,9 @@ mod tests {
         let mut pairs: Vec<(&str, &str)> = keys.iter().map(|key| (key.as_str(), "x")).collect();
         pairs.push(("a", "b"));
         let mut doc = document(&body_xml);
-        assert_eq!(replace_text(&mut doc, &pairs), 20_000);
+        let mut counts = vec![0; 200];
+        counts.push(20_000);
+        assert_eq!(replace_text(&mut doc, &pairs), counts);
         assert_eq!(paragraphs(&doc), [vec!["b"; 20_000].join("|")]);
 
         assert_eq!(find("ab", &["abc", "b", "ab"]), [(0, 2, 2)]);
@@ -2309,7 +2324,7 @@ mod tests {
                 &[("{{a}}", "X")],
             ),
             (
-                5,
+                vec![5],
                 concat!(
                     "<w:p><w:r><w:t xml:space=\"preserve\">X</w:t></w:r></w:p>",
                     "<w:p><w:r><w:t>Hello </w:t></w:r>",
@@ -2324,7 +2339,7 @@ mod tests {
         // What Word displays is what matches: "Hello" and "{{a}}" touch.
         let mut doc =
             document("<w:p><w:r><w:t>Hello </w:t></w:r><w:r><w:t>{{a}}</w:t></w:r></w:p>");
-        assert_eq!(replace_text(&mut doc, &[("Hello{{a}}", "Hi")]), 1);
+        assert_eq!(replace_text(&mut doc, &[("Hello{{a}}", "Hi")]), [1]);
         assert_eq!(paragraphs(&doc), ["Hi"]);
     }
 
@@ -3423,7 +3438,8 @@ mod tests {
             // and line breaks of values become barriers.
             let (expected, count) = naive_segments(&before, &pairs);
             let mut doc = original.clone();
-            assert_eq!(replace_text(&mut doc, &pairs), count, "{body_xml}");
+            let counts = replace_text(&mut doc, &pairs);
+            assert_eq!(counts.iter().sum::<usize>(), count, "{body_xml}");
             let doc = document(&body(&doc));
             assert_eq!(segments(&doc), expected, "{body_xml}");
             assert_eq!(hidden(&doc), hidden_before, "{body_xml}");
@@ -3663,7 +3679,7 @@ mod tests {
              <{prefix}:t>{{{{a}}}}</{prefix}:t></{prefix}:r></w:p></w:body></w:document>"
         ))
         .unwrap();
-        assert_eq!(replace_text(&mut doc, &[("{{a}}", "1\t2\n3")]), 1);
+        assert_eq!(replace_text(&mut doc, &[("{{a}}", "1\t2\n3")]), [1]);
         let xml = serialize(&doc);
         assert!(xml.contains(&format!("<{prefix}:tab/>")), "{xml}");
         assert!(xml.contains(&format!("<{prefix}:br/>")), "{xml}");
@@ -3696,7 +3712,7 @@ mod tests {
                 &pairs
             ),
             (
-                1,
+                vec![1],
                 "<w:p><w:r><w:t>{{a}}<w:x/></w:t><w:t xml:space=\"preserve\">b</w:t></w:r></w:p>"
                     .to_owned()
             )
@@ -3717,7 +3733,7 @@ mod tests {
             "<a:r><a:t>{{a}}</a:t></a:r></a:p></w:drawing></w:r></w:p>",
             "<w:p xmlns:w=\"urn:not-word\"><w:r><w:t>{{a}}</w:t></w:r></w:p>",
         );
-        assert_eq!(replaced(unchanged, &pairs), (0, unchanged.to_owned()));
+        assert_eq!(replaced(unchanged, &pairs), (vec![0], unchanged.to_owned()));
     }
 
     #[test]
@@ -3738,7 +3754,7 @@ mod tests {
                 &pairs,
             ),
             (
-                3,
+                vec![3],
                 concat!(
                     "<w:p><w:r><w:t>{{</w:t></w:r><w:p><w:r><w:t xml:space=\"preserve\">b</w:t>",
                     "</w:r></w:p><w:r><w:t>a}}</w:t></w:r></w:p>",
@@ -3762,7 +3778,7 @@ mod tests {
                 &pairs
             ),
             (
-                1,
+                vec![1],
                 "<w:p><w:r><w:t xml:space=\"preserve\">b</w:t></w:r></w:p>".to_owned()
             )
         );
@@ -3794,7 +3810,7 @@ mod tests {
         ] {
             let root = Element::parse_fragment(&xml).unwrap();
             let mut doc = root.clone();
-            assert_eq!(replace_text(&mut doc, &pairs), count, "{xml}");
+            assert_eq!(replace_text(&mut doc, &pairs), [count], "{xml}");
             exercise(&root, &table, PLACEHOLDERS);
         }
     }
@@ -3859,7 +3875,7 @@ mod tests {
                 let root = XmlDocument::parse(xml.as_bytes()).unwrap().root;
                 let table = Element::parse_fragment(TABLE).unwrap();
                 let mut doc = root.clone();
-                assert_eq!(replace_text(&mut doc, &[("{{a}}", "b")]), 83);
+                assert_eq!(replace_text(&mut doc, &[("{{a}}", "b")]), [83]);
                 let mut doc = root.clone();
                 assert_eq!(replace_with_element(&mut doc, "{{a}}", || drawing(1)), 83);
                 assert!(!table_placeholders_are_alone(&root, "{{a}}"));
