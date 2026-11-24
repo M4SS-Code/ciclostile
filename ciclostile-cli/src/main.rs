@@ -2,12 +2,12 @@
 //!
 //! Made to be driven by scripts and agents: every edit can come from a JSON
 //! spec, from flags, or from both, and each run prints a JSON report of how
-//! many times each placeholder was replaced.
+//! many times each placeholder was replaced and which ones are left.
 
 mod spec;
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ffi::OsString,
     fs,
     io::{self, Read as _, Write as _},
@@ -20,7 +20,7 @@ use ciclostile::{Docx, Image, Table};
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
-use self::spec::{Spec, TextValue};
+use self::spec::{DEFAULT_DELIMITERS, Spec, TextValue};
 
 const FILL_HELP: &str = r#"SPEC FORMAT (--spec):
   {
@@ -45,7 +45,8 @@ const FILL_HELP: &str = r#"SPEC FORMAT (--spec):
       }
     ],
     "update_fields": false,
-    "strict": false
+    "strict": false,
+    "delimiters": ["{{", "}}"]
   }
 
   Every field is optional. Unknown fields are an error, and so is a
@@ -54,6 +55,9 @@ const FILL_HELP: &str = r#"SPEC FORMAT (--spec):
   unit: cm, mm, in, pt, px or emu. Flags are added to the spec: a --text
   flag overrides the same placeholder in the spec, images and tables are
   appended.
+
+  "delimiters" are those of the placeholders to look for in the result
+  (default ["{{", "}}"]); null turns that check off.
 
 ORDER:
   Text is replaced first, in one pass (inserted text is never searched
@@ -65,13 +69,14 @@ REPORT:
   A JSON object on standard output (standard error when the document goes
   to standard output): the output path, whether it was written, a
   {placeholder, replaced} entry for every text, image and table
-  replacement in the order given, and "missing", the placeholders to
-  replace that were found nowhere.
+  replacement in the order given, "missing", the placeholders to replace
+  that were found nowhere, and "unfilled", the placeholders left in the
+  result (null when "delimiters" is null).
 
 EXIT CODES:
   0 success; 1 an error, with nothing written and no report; 2 invalid
-  arguments; 3 with --strict, placeholders missing, with nothing written
-  and the report printed.
+  arguments; 3 with --strict, placeholders missing or left unfilled, with
+  nothing written and the report printed.
 
 EXAMPLES:
   ciclostile fill template.docx -o out.docx --text '{{name}}=Ada' \
@@ -79,10 +84,26 @@ EXAMPLES:
     --table '{{items}}=[["Item","Qty"],["Cards",500]]'
   ciclostile fill --spec spec.json
   echo '{"text": {"{{name}}": "Ada"}}' | ciclostile fill t.docx -o out.docx --spec -
-  ciclostile fill t.docx --dry-run --strict --text '{{name}}=Ada'"#;
+  ciclostile fill t.docx --dry-run --strict --text '{{name}}=Ada'
+  ciclostile placeholders t.docx"#;
 
-/// The exit code of a `--strict` run with placeholders missing. clap exits
-/// with 2 on invalid arguments.
+const PLACEHOLDERS_HELP: &str = r#"OUTPUT:
+  A JSON object on standard output: "placeholders", one
+  {placeholder, count} entry per placeholder, in the order they first
+  appear. A placeholder in a text box counts twice: Word stores each text
+  box twice.
+
+  Placeholders are found where `fill` replaces them and as it sees them:
+  text that Word split across runs is joined, and text deleted with tracked
+  changes is left out. One interrupted by a tab, a line break, a picture or
+  a field can't be replaced, and isn't listed.
+
+EXAMPLES:
+  ciclostile placeholders template.docx
+  ciclostile placeholders template.docx --delimiters '[' ']'"#;
+
+/// The exit code of a `--strict` run with placeholders missing or left
+/// unfilled. clap exits with 2 on invalid arguments.
 const EXIT_INCOMPLETE: u8 = 3;
 
 #[derive(Debug, Parser)]
@@ -98,6 +119,25 @@ enum Command {
     /// tables, keeping everything else untouched.
     #[command(after_long_help = FILL_HELP)]
     Fill(FillArgs),
+    /// List the placeholders of a .docx file: what a template needs, or
+    /// what a filled document still holds.
+    #[command(after_long_help = PLACEHOLDERS_HELP)]
+    Placeholders(PlaceholdersArgs),
+}
+
+#[derive(Debug, Args)]
+struct PlaceholdersArgs {
+    /// The .docx file, or `-` for standard input.
+    template: PathBuf,
+
+    /// The opening and closing delimiters of the placeholders.
+    #[arg(
+        long,
+        num_args = 2,
+        value_names = ["OPEN", "CLOSE"],
+        default_values = DEFAULT_DELIMITERS
+    )]
+    delimiters: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -146,9 +186,14 @@ struct FillArgs {
     update_fields: bool,
 
     /// Fail with exit code 3, writing nothing, when a placeholder to
-    /// replace isn't found.
+    /// replace isn't found or one is left in the result.
     #[arg(long)]
     strict: bool,
+
+    /// The delimiters of the placeholders to look for in the result.
+    /// Overrides the spec's "delimiters". Default: `{{` `}}`.
+    #[arg(long, num_args = 2, value_names = ["OPEN", "CLOSE"])]
+    delimiters: Option<Vec<String>>,
 
     /// Apply the edits and print the report, but write nothing. No output
     /// path is needed.
@@ -171,6 +216,8 @@ struct Report {
     tables: Vec<Replaced>,
     /// The placeholders to replace that were found nowhere.
     missing: Vec<String>,
+    /// The placeholders left in the result, or `None` when not checked.
+    unfilled: Option<Vec<String>>,
 }
 
 /// What one replacement did, for the report.
@@ -182,19 +229,51 @@ struct Replaced {
     replaced: usize,
 }
 
-/// Raised by `--strict` when placeholders are missing: the report is
-/// still printed, and the exit code tells it apart from other failures.
+/// The output of the `placeholders` command.
+#[derive(Debug, Serialize)]
+struct Placeholders {
+    /// Each placeholder once, in the order they first appear.
+    placeholders: Vec<Found>,
+}
+
+/// One placeholder of a document, with how often it occurs.
+#[derive(Debug, Serialize)]
+struct Found {
+    /// The placeholder, delimiters included.
+    placeholder: String,
+    /// How many times it occurs.
+    count: usize,
+}
+
+/// Raised by `--strict` when placeholders are missing or left unfilled:
+/// the report is still printed, and the exit code tells it apart from
+/// other failures.
 #[derive(Debug, thiserror::Error)]
-#[error("placeholders not found: {}", missing.join(", "))]
+#[error("placeholders {}", problems(missing, unfilled))]
 struct Incomplete {
     /// The placeholders to replace that were found nowhere.
     missing: Vec<String>,
+    /// The placeholders left in the result.
+    unfilled: Vec<String>,
+}
+
+/// Describe what an [`Incomplete`] holds.
+fn problems(missing: &[String], unfilled: &[String]) -> String {
+    let mut problems = Vec::new();
+    if !missing.is_empty() {
+        problems.push(format!("not found: {}", missing.join(", ")));
+    }
+    if !unfilled.is_empty() {
+        problems.push(format!("left unfilled: {}", unfilled.join(", ")));
+    }
+    problems.join("; ")
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Fill(args) => fill(&args),
+        Command::Placeholders(args) => placeholders(&args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -230,9 +309,12 @@ fn fill(args: &FillArgs) -> Result<()> {
     let mut docx = open(&template)?;
     let mut report = apply(&mut docx, &spec)?;
     let to_stdout = output.as_deref() == Some(stdin);
-    let incomplete = (spec.strict && !report.missing.is_empty()).then(|| Incomplete {
-        missing: report.missing.clone(),
-    });
+    let unfilled = report.unfilled.clone().unwrap_or_default();
+    let incomplete =
+        (spec.strict && !(report.missing.is_empty() && unfilled.is_empty())).then(|| Incomplete {
+            missing: report.missing.clone(),
+            unfilled,
+        });
 
     if incomplete.is_none()
         && !args.dry_run
@@ -260,6 +342,38 @@ fn fill(args: &FillArgs) -> Result<()> {
         Some(incomplete) => Err(incomplete.into()),
         None => Ok(()),
     }
+}
+
+/// Print the placeholders of a document, with how often each occurs.
+fn placeholders(args: &PlaceholdersArgs) -> Result<()> {
+    let [open_delimiter, close_delimiter] = args.delimiters.as_slice() else {
+        unreachable!("clap takes exactly two delimiters");
+    };
+    let docx = open(&args.template)?;
+    let placeholders = tally(docx.placeholders(open_delimiter, close_delimiter))
+        .into_iter()
+        .map(|(placeholder, count)| Found { placeholder, count })
+        .collect();
+    let json = serde_json::to_string_pretty(&Placeholders { placeholders })?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Count each distinct string of `items`, in the order they first appear.
+fn tally(items: Vec<String>) -> Vec<(String, usize)> {
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for item in items {
+        if let Some(&at) = index.get(&item) {
+            if let Some((_, count)) = counts.get_mut(at) {
+                *count += 1;
+            }
+        } else {
+            index.insert(item.clone(), counts.len());
+            counts.push((item, 1));
+        }
+    }
+    counts
 }
 
 /// Read and open the .docx file at `path`, or on standard input for `-`.
@@ -374,6 +488,9 @@ fn merge_flags(spec: &mut Spec, args: &FillArgs) -> Result<()> {
     }
     spec.update_fields |= args.update_fields;
     spec.strict |= args.strict;
+    if let Some([open, close]) = args.delimiters.as_deref() {
+        spec.delimiters = Some([open.clone(), close.clone()]);
+    }
     Ok(())
 }
 
@@ -424,6 +541,12 @@ fn apply(docx: &mut Docx, spec: &Spec) -> Result<Report> {
         .filter(|entry| entry.replaced == 0)
         .map(|entry| entry.placeholder.clone())
         .collect();
+    let unfilled = spec.delimiters.as_ref().map(|[open, close]| {
+        tally(docx.placeholders(open, close))
+            .into_iter()
+            .map(|(placeholder, _)| placeholder)
+            .collect()
+    });
     Ok(Report {
         output: None,
         written: false,
@@ -431,6 +554,7 @@ fn apply(docx: &mut Docx, spec: &Spec) -> Result<Report> {
         images: images_report,
         tables: tables_report,
         missing,
+        unfilled,
     })
 }
 

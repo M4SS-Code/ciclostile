@@ -11,8 +11,12 @@ use serde::{
 };
 use serde_json::Value;
 
+/// The placeholder delimiters `fill` checks the result with, unless the
+/// spec turns the check off.
+pub(crate) const DEFAULT_DELIMITERS: [&str; 2] = ["{{", "}}"];
+
 /// Everything one `fill` run does.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Spec {
     /// The template to read. `-` reads standard input.
@@ -32,9 +36,29 @@ pub(crate) struct Spec {
     /// references) when it opens the result.
     #[serde(default)]
     pub(crate) update_fields: bool,
-    /// Fail, writing nothing, when a placeholder to replace isn't found.
+    /// Fail, writing nothing, when a placeholder to replace isn't found or
+    /// one is left in the result.
     #[serde(default)]
     pub(crate) strict: bool,
+    /// The opening and closing delimiters of the placeholders to look for
+    /// in the result, or `None` (`null` in JSON) not to look.
+    #[serde(default = "default_delimiters")]
+    pub(crate) delimiters: Option<[String; 2]>,
+}
+
+impl Default for Spec {
+    fn default() -> Self {
+        Self {
+            template: None,
+            output: None,
+            text: TextMap::default(),
+            images: Vec::new(),
+            tables: Vec::new(),
+            update_fields: false,
+            strict: false,
+            delimiters: default_delimiters(),
+        }
+    }
 }
 
 impl Spec {
@@ -60,6 +84,14 @@ impl Spec {
         }
         Ok(())
     }
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "serde's `default` needs the field's type"
+)]
+fn default_delimiters() -> Option<[String; 2]> {
+    Some(DEFAULT_DELIMITERS.map(str::to_owned))
 }
 
 /// The text replacements of a spec, in the order given.
@@ -385,6 +417,17 @@ mod tests {
 
         assert!(parse_table_flag(r#"{{t}}={"rows": [], "colour": "red"}"#).is_err());
         assert!(parse_table_flag("{{t}}=nope").is_err());
+    }
+
+    #[test]
+    fn delimiters_default_and_can_be_turned_off() {
+        let spec: Spec = serde_json::from_str("{}").unwrap();
+        assert_eq!(spec.delimiters, Some(["{{".to_owned(), "}}".to_owned()]));
+        assert_eq!(Spec::default().delimiters, spec.delimiters);
+        let spec: Spec = serde_json::from_str(r#"{"delimiters": null}"#).unwrap();
+        assert_eq!(spec.delimiters, None);
+        let spec: Spec = serde_json::from_str(r#"{"delimiters": ["[", "]"]}"#).unwrap();
+        assert_eq!(spec.delimiters, Some(["[".to_owned(), "]".to_owned()]));
     }
 
     #[test]

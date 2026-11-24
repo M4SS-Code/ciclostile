@@ -56,8 +56,9 @@ document has none left, list them with `Docx::placeholders("{{", "}}")`.
 
 The [`ciclostile-cli`](ciclostile-cli) crate installs a `ciclostile`
 binary that does the same edits from flags, a JSON spec, or both, and
-prints a JSON report of how many times each placeholder was replaced.
-`ciclostile fill --help` describes the spec format.
+prints a JSON report of how many times each placeholder was replaced and
+which ones are left. `ciclostile placeholders` lists the placeholders of a
+template, and `ciclostile fill --help` describes the spec format.
 
 ```sh
 ciclostile fill template.docx -o output.docx \
@@ -66,6 +67,8 @@ ciclostile fill template.docx -o output.docx \
   --table '{{items}}={"rows": [["Item", "Quantity"], ["Punched cards", 500]], "header": true}'
 
 ciclostile fill --spec spec.json --strict
+
+ciclostile placeholders template.docx
 ```
 
 [`ciclostile-cli/examples/invoice`](ciclostile-cli/examples/invoice) holds

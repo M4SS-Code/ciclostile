@@ -1,5 +1,5 @@
-//! `ciclostile fill` end to end, on the library's sample template and on
-//! the invoice example.
+//! `ciclostile` end to end: `fill` and `placeholders` on the library's
+//! sample template and on the invoice example.
 
 #[path = "../../tests/common/mod.rs"]
 pub mod common;
@@ -14,7 +14,7 @@ use std::{
 use common::Fixture;
 use serde_json::{Value, json};
 
-/// The exit code of a `--strict` run with placeholders missing.
+/// The exit code of a `--strict` run with placeholders missing or unfilled.
 const INCOMPLETE: i32 = 3;
 
 /// A fresh directory holding the sample template as `template.docx` and a
@@ -264,6 +264,12 @@ fn text_is_replaced_in_one_pass() {
         paragraphs.iter().any(|text| text == "Dear {{date}},"),
         "{paragraphs:#?}"
     );
+    assert!(
+        report["unfilled"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("{{date}}"))
+    );
 }
 
 #[test]
@@ -277,7 +283,7 @@ fn counts_come_from_the_single_pass() {
             "--dry-run",
             "--strict",
             "--spec",
-            r#"{"text": {"Invoice": "Fattura", "Invoice {{number}}": "X"}}"#,
+            r#"{"text": {"Invoice": "Fattura", "Invoice {{number}}": "X"}, "delimiters": null}"#,
         ],
     );
     assert_eq!(output.status.code(), Some(INCOMPLETE), "{output:?}");
@@ -296,7 +302,7 @@ fn strict_fails_on_missing_placeholders() {
         ("tables", ["--table", "{{nowhere}}=[[1]]"]),
     ] {
         // Without strict, the run succeeds and reports it.
-        let mut lenient = vec!["--dry-run"];
+        let mut lenient = vec!["--dry-run", "--spec", r#"{"delimiters": null}"#];
         lenient.extend(args);
         let output = fill(&dir, &lenient);
         assert!(output.status.success(), "{output:?}");
@@ -304,8 +310,15 @@ fn strict_fails_on_missing_placeholders() {
         assert_eq!(replaced(&json, kind, "{{nowhere}}"), 0);
         assert_eq!(json["missing"], json!(["{{nowhere}}"]));
 
-        // With it, nothing is written.
-        let mut strict = vec!["-o", "out.docx", "--strict"];
+        // With it, nothing is written. Turning the unfilled check off makes
+        // the missing placeholder the only reason to fail.
+        let mut strict = vec![
+            "-o",
+            "out.docx",
+            "--strict",
+            "--spec",
+            r#"{"delimiters": null}"#,
+        ];
         strict.extend(args);
         let output = fill(&dir, &strict);
         assert_eq!(output.status.code(), Some(INCOMPLETE), "{output:?}");
@@ -319,19 +332,80 @@ fn strict_fails_on_missing_placeholders() {
         );
         assert!(!dir.join("out.docx").exists());
     }
+}
+
+#[test]
+fn strict_fails_on_placeholders_left_unfilled() {
+    let dir = workdir("strict-unfilled");
+    let output = fill(
+        &dir,
+        &["-o", "out.docx", "--strict", "--text", "{{customer}}=Ada"],
+    );
+    assert_eq!(output.status.code(), Some(INCOMPLETE), "{output:?}");
+    let json = report(&output);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["missing"], json!([]));
+    let unfilled = json["unfilled"].as_array().unwrap();
+    assert!(unfilled.contains(&json!("{{date}}")), "{unfilled:?}");
+    assert!(!unfilled.contains(&json!("{{customer}}")), "{unfilled:?}");
+    // Each once, though `{{company}}` occurs three times.
+    let companies = unfilled
+        .iter()
+        .filter(|found| *found == "{{company}}")
+        .count();
+    assert_eq!(companies, 1, "{unfilled:?}");
+    let message = stderr(&output);
+    assert!(
+        message.contains("left unfilled") && message.contains("{{date}}"),
+        "{message}"
+    );
+    assert!(!dir.join("out.docx").exists());
 
     // A spec's "strict" counts as much as the flag.
+    let output = fill(&dir, &["-o", "out.docx", "--spec", r#"{"strict": true}"#]);
+    assert_eq!(output.status.code(), Some(INCOMPLETE), "{output:?}");
+
+    // Without strict, the document is written and the report still says.
+    let output = fill(&dir, &["-o", "out.docx", "--text", "{{customer}}=Ada"]);
+    assert!(output.status.success(), "{output:?}");
+    let unfilled = report(&output)["unfilled"].clone();
+    assert!(
+        unfilled.as_array().unwrap().contains(&json!("{{date}}")),
+        "{unfilled}"
+    );
+}
+
+#[test]
+fn the_unfilled_check_follows_the_delimiters() {
+    let dir = workdir("delimiters");
+    // `null` turns the check off.
     let output = fill(
         &dir,
         &[
             "--dry-run",
+            "--strict",
             "--spec",
-            r#"{"strict": true}"#,
-            "--text",
-            "{{nowhere}}=x",
+            r#"{"text": {"{{customer}}": "Ada"}, "delimiters": null}"#,
         ],
     );
-    assert_eq!(output.status.code(), Some(INCOMPLETE), "{output:?}");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(report(&output)["unfilled"], Value::Null);
+
+    // Other delimiters only see their own placeholders.
+    let output = fill(
+        &dir,
+        &[
+            "--dry-run",
+            "--strict",
+            "--delimiters",
+            "[[",
+            "]]",
+            "--text",
+            "{{customer}}=Ada",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(report(&output)["unfilled"], json!([]));
 }
 
 #[test]
@@ -489,6 +563,7 @@ fn invalid_invocations_fail_and_name_the_problem() {
             &["fill", "-", "--spec", "-", "-o", "out.docx"],
             "both come from standard input",
         ),
+        (&["placeholders", "nowhere.docx"], "nowhere.docx"),
     ] {
         let output = run(&dir, args, b"{}");
         assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
@@ -534,5 +609,50 @@ fn invoice_example_fills_every_placeholder() {
     let report = report(&output);
     assert_eq!(report["written"], false);
     assert_eq!(report["missing"], json!([]));
+    assert_eq!(report["unfilled"], json!([]));
     assert_eq!(replaced(&report, "tables", "{{items}}"), 1);
+}
+
+// ── placeholders ─────────────────────────────────────────────────────────────
+
+#[test]
+fn placeholders_lists_each_once_with_its_count() {
+    let dir = workdir("placeholders");
+    let output = run(&dir, &["placeholders", "template.docx"], b"");
+    assert!(output.status.success(), "{output:?}");
+    // The fields in the documented order.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.find("\"placeholder\"") < stdout.find("\"count\""),
+        "{stdout}"
+    );
+
+    let found = report(&output)["placeholders"].as_array().unwrap().clone();
+    let count = |placeholder: &str| {
+        let entries: Vec<&Value> = found
+            .iter()
+            .filter(|entry| entry["placeholder"] == placeholder)
+            .collect();
+        assert_eq!(entries.len(), 1, "{placeholder} once: {found:?}");
+        entries[0]["count"].as_u64().unwrap()
+    };
+    assert_eq!(count("{{company}}"), 3);
+    assert_eq!(count("{{boxed}}"), 2);
+    // Once: its other copy is a tracked deletion.
+    assert_eq!(count("{{customer}}"), 1);
+
+    let output = run(
+        &dir,
+        &["placeholders", "-", "--delimiters", "{{c", "}}"],
+        &fs::read(dir.join("template.docx")).unwrap(),
+    );
+    assert!(output.status.success(), "{output:?}");
+    let found = report(&output)["placeholders"].as_array().unwrap().clone();
+    assert_ne!(found, Vec::<Value>::new());
+    for entry in &found {
+        assert!(
+            entry["placeholder"].as_str().unwrap().starts_with("{{c"),
+            "{entry}"
+        );
+    }
 }
