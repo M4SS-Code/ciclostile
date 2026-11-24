@@ -52,7 +52,7 @@ jobs:
           components: clippy
 
       - name: cargo clippy
-        run: cargo clippy --locked --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   test:
     if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
@@ -91,7 +91,7 @@ jobs:
             rust-${{ matrix.rust }}-${{ runner.arch }}-
 
       - name: cargo test
-        run: cargo test --locked
+        run: cargo test --locked --workspace
 
 
   msrv:
@@ -123,7 +123,7 @@ jobs:
             rust-1.88.0-${{ runner.arch }}-
 
       - name: cargo test
-        run: cargo test --locked
+        run: cargo test --locked --workspace
 
 
   deny:
