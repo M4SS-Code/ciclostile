@@ -1,4 +1,5 @@
-//! `ciclostile fill` end to end, on the library's sample template.
+//! `ciclostile fill` end to end, on the library's sample template and on
+//! the invoice example.
 
 #[path = "../../tests/common/mod.rs"]
 pub mod common;
@@ -516,4 +517,22 @@ fn inline_specs_may_start_with_whitespace() {
     );
     assert!(output.status.success(), "{output:?}");
     assert_eq!(replaced(&report(&output), "text", "{{customer}}"), 1);
+}
+
+#[test]
+fn invoice_example_fills_every_placeholder() {
+    // A copy, so that a run that writes when it shouldn't can't leave files
+    // in the source tree.
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/invoice");
+    let dir = workdir("invoice");
+    for name in ["spec.json", "template.docx", "logo.png"] {
+        fs::copy(example.join(name), dir.join(name)).unwrap();
+    }
+    // The spec sets "strict", so a placeholder it misses fails the run.
+    let output = run(&dir, &["fill", "--spec", "spec.json", "--dry-run"], b"");
+    assert!(output.status.success(), "{output:?}");
+    let report = report(&output);
+    assert_eq!(report["written"], false);
+    assert_eq!(report["missing"], json!([]));
+    assert_eq!(replaced(&report, "tables", "{{items}}"), 1);
 }

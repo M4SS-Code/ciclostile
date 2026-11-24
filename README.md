@@ -68,6 +68,11 @@ ciclostile fill template.docx -o output.docx \
 ciclostile fill --spec spec.json --strict
 ```
 
+[`ciclostile-cli/examples/invoice`](ciclostile-cli/examples/invoice) holds
+a complete example: a template, a logo and a spec that fills every
+placeholder. Run `ciclostile fill --spec spec.json` in that directory to
+get `invoice.docx`, which looks like [`preview.png`](ciclostile-cli/examples/invoice/preview.png).
+
 ## License
 
 Licensed under either of
